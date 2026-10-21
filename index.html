@@ -531,13 +531,14 @@ function viewSet(which) {
     if (!r.ok) { $('main').innerHTML = '<div class="msg ng">' + esc(r.error) + '</div>'; return; }
     var rows = r.rows || [];
     var cols = rows.length ? Object.keys(rows[0]).filter(function (k) { return k !== 'hasPin'; }) : [];
-    var html = '<div class="card"><div class="row noprint">' + SET_TABS.map(function (x, i) { return '<button class="btn sm' + (i === which ? ' pri' : '') + '" data-st="' + i + '" style="flex:0">' + x[2] + '</button>'; }).join('') + '</div></div>';
+    var html = '<div class="card"><div class="row noprint">' + SET_TABS.map(function (x, i) { return '<button class="btn sm' + (i === which ? ' pri' : '') + '" data-st="' + i + '" style="flex:0">' + x[2] + '</button>'; }).join('') + '<button class="btn sm" id="cwTab" style="flex:0">チャットワーク</button></div></div>';
     html += '<div class="card scroll"><table><tr>' + cols.map(function (c) { return '<th>' + esc(c) + '</th>'; }).join('') + '<th></th></tr>' + rows.map(function (x, i) {
       return '<tr>' + cols.map(function (c) { return '<td class="small">' + esc(x[c]) + '</td>'; }).join('') + '<td><button class="btn sm" data-ed="' + i + '">直す</button>' +
         (t[2] === '職員' ? ' <button class="btn sm" data-pin="' + esc(x['職員ID']) + '">暗証番号' + (x.hasPin ? 'の再発行' : 'を発行') + '</button>' : '') + (t[2] === '事業所' ? ' <button class="btn sm" data-key="' + esc(x['事業所']) + '">共用端末の合い鍵</button>' : '') + '</td></tr>';
     }).join('') + '</table><p><button class="btn pri" id="addRow">追加する</button></p></div>';
     $('main').innerHTML = html;
     Array.prototype.forEach.call(document.querySelectorAll('[data-st]'), function (b) { b.onclick = function () { viewSet(+b.dataset.st); }; });
+    $('cwTab').onclick = viewCw;
     var edit = function (row) {
       var keys = cols.length ? cols : [t[3]];
       dialog('<h2 style="margin-top:0">' + esc(t[2]) + '</h2>' + keys.filter(function (k) { return !/ハッシュ/.test(k); }).map(function (k) { return '<label class="f">' + esc(k) + '</label><input data-k="' + esc(k) + '" value="' + esc(row ? row[k] : '') + '"' + (row && k === t[3] ? ' readonly' : '') + '>'; }).join('') + '<div class="row" style="margin-top:12px"><button class="btn" onclick="closeDlg()">やめる</button><button class="btn pri" id="edGo">保存</button></div>');
@@ -547,6 +548,29 @@ function viewSet(which) {
     $('addRow').onclick = function () { edit(null); };
     Array.prototype.forEach.call(document.querySelectorAll('[data-pin]'), function (b) { b.onclick = function () { if (!confirm(b.dataset.pin + ' の暗証番号を新しくします。今のログインは切れます。')) return; call('resetPin', { staffId: b.dataset.pin }).then(function (x) { if (!x.ok) return alert(x.error); dialog('<h2 style="margin-top:0">新しい暗証番号</h2><p style="font-size:32px;font-weight:700;text-align:center">' + esc(x.pin) + '</p><p class="muted">本人に伝えてください。この画面を閉じると二度と表示されません。</p><button class="btn pri" onclick="closeDlg()">閉じる</button>'); viewSet(which); }); }; });
     Array.prototype.forEach.call(document.querySelectorAll('[data-key]'), function (b) { b.onclick = function () { if (!confirm(b.dataset.key + ' の共用端末の合い鍵を作り直します。古い合い鍵の端末は使えなくなります。')) return; call('sharedKey', { site: b.dataset.key }).then(function (x) { if (!x.ok) return alert(x.error); var url = location.origin + location.pathname + '?shared=' + x.key; dialog('<h2 style="margin-top:0">共用端末のURL</h2><p class="small" style="word-break:break-all">' + esc(url) + '</p><p class="muted">このURLをホームのタブレットで1回開くと、その端末は共用端末になります。</p><button class="btn pri" onclick="closeDlg()">閉じる</button>'); }); }; });
+  });
+}
+// ── チャットワークの設定（管理者） ──
+function viewCw(msg) {
+  call('cwStatus').then(function (r) {
+    if (!r.ok) { $('main').innerHTML = '<div class="msg ng">' + esc(r.error) + '</div>'; return; }
+    var html = '<div class="card"><div class="row noprint">' + SET_TABS.map(function (x, i) { return '<button class="btn sm" data-st="' + i + '" style="flex:0">' + x[2] + '</button>'; }).join('') + '<button class="btn sm pri" style="flex:0">チャットワーク</button></div></div>';
+    html += '<div class="card"><h2>1. APIトークン</h2>' + (msg || '') +
+      (r.set ? '<div class="msg ok">設定済み：' + esc(r.account) + ' のアカウントから送ります</div>' : '<div class="msg warn">まだ入っていません。入れるまで、通知はタイムカード画面の「お知らせ」にだけ出ます。</div>') +
+      '<p class="small muted">チャットワークにログイン → 右上の名前 →「サービス連携」→「APIトークン」で表示されたトークンを貼り付けます。通知はこのアカウントから送られます。トークンはGASの中にだけ保存し、画面には二度と出しません。</p>' +
+      '<div class="row"><input id="cwTok" type="password" autocomplete="off" placeholder="APIトークンを貼り付け"><button class="btn pri" id="cwSave">保存</button></div></div>';
+    if (r.set) {
+      html += '<div class="card"><h2>2. 送り先</h2>' + (r.roomsError ? '<div class="msg ng">' + esc(r.roomsError) + '</div>' : '') +
+        '<p class="small muted">トークンのアカウントの「マイチャット」と「ダイレクトチャット」から選びます。トークンのアカウント本人にはマイチャット、ほかの人にはその人とのダイレクトチャットを選んでください（グループチャットは出しません）。</p>' +
+        '<table><tr><th>名前</th><th>権限</th><th>送り先</th><th></th></tr>' + r.staff.map(function (s) {
+          return '<tr><td>' + esc(s.name) + '</td><td>' + esc(s.role) + '</td><td><select data-room="' + esc(s.id) + '"><option value="">（送らない）</option>' + r.rooms.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === s.room ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join('') + '</select></td><td><button class="btn sm" data-test="' + esc(s.id) + '"' + (s.room ? '' : ' disabled') + '>テスト送信</button></td></tr>';
+        }).join('') + '</table><p class="small muted">職員にもチャットワークで送りたいときは、「設定」→「職員」でその人の「チャットワークのルームID」を入れると、ここに出ます。</p></div>';
+    }
+    $('main').innerHTML = html;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-st]'), function (b) { b.onclick = function () { viewSet(+b.dataset.st); }; });
+    $('cwSave').onclick = function () { var t = $('cwTok').value.trim(); if (!t) return; call('cwTokenSet', { token2: t }).then(function (x) { viewCw(x.ok ? '<div class="msg ok">保存しました（' + esc(x.account || '') + '）</div>' : '<div class="msg ng">' + esc(x.error) + '</div>'); }); };
+    Array.prototype.forEach.call(document.querySelectorAll('[data-room]'), function (sel) { sel.onchange = function () { call('cwRoomSet', { staffId: sel.dataset.room, roomId: sel.value }).then(function (x) { viewCw(x.ok ? '<div class="msg ok">送り先を保存しました</div>' : '<div class="msg ng">' + esc(x.error) + '</div>'); }); }; });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-test]'), function (b) { b.onclick = function () { call('cwTest', { staffId: b.dataset.test }).then(function (x) { viewCw(x.ok ? '<div class="msg ok">テストを送りました。チャットワークを見てください</div>' : '<div class="msg ng">' + esc(x.error) + '</div>'); }); }; });
   });
 }
 </script>
