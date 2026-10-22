@@ -459,6 +459,7 @@ function viewSched(month) {
     });
     // パターンごとの人数
     r.patterns.forEach(function (p) {
+      if (!used[p.name]) return; // この表で使っていないパターンの行は出さない
       html += '<tr><td class="name small muted">' + esc(p.abbr) + ' の人数</td>' + dates.map(function (d) { var n = r.staff.filter(function (s) { return (cellAbbr[s.id + '|' + d] || []).indexOf(p.abbr) >= 0; }).length; return '<td class="small">' + (n || '') + '</td>'; }).join('') + '</tr>';
     });
     html += '</table>';
