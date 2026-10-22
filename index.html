@@ -421,9 +421,18 @@ function viewSched(month) {
   call('scheduleGet', { month: month }).then(function (r) {
     if (!r.ok) { $('main').innerHTML = '<div class="msg ng">' + esc(r.error) + '</div>'; return; }
     var dates = []; for (var d = r.range.from; d <= r.range.to; d = addDays(d, 1)) dates.push(d);
+    // グループホームと訪問看護は別のシフト表にする（見られる方だけ出す）
+    var grpOf = function (site) { return site === '訪問看護' ? 'hk' : 'gh'; };
+    var groups = ['gh', 'hk'].filter(function (g) { return r.staff.some(function (s) { return grpOf(s.site) === g; }); });
+    if (groups.indexOf(viewSched.grp) < 0) viewSched.grp = groups[0] || 'gh';
+    var grp = viewSched.grp;
+    r.staff = r.staff.filter(function (s) { return grpOf(s.site) === grp; });
+    var used = {}; r.rows.forEach(function (x) { if (r.staff.some(function (s) { return s.id === x.staffId; })) used[x.pattern] = true; });
+    r.patterns = r.patterns.filter(function (p) { var g = p.sites ? (p.sites.split(/[,、]/).some(function (x) { return grpOf(x.trim()) === 'gh'; }) ? 'gh' : 'hk') : 'gh'; return g === grp || used[p.name]; });
     var cell = {}; r.rows.forEach(function (x) { var k = x.staffId + '|' + x.date; var p = r.patterns.filter(function (pp) { return pp.name === x.pattern; })[0]; (cell[k] = cell[k] || []).push(x.leaveKind || (p ? p.abbr : x.pattern)); });
     var colors = {}; r.patterns.forEach(function (p) { colors[p.abbr] = p.color; });
-    var html = '<div class="card">' + monthNav(month) + (r.closed ? '<span class="pill ok">締め済み</span>' : '') +
+    var html = '<div class="card">' + (groups.length > 1 ? '<div class="row noprint" style="margin-bottom:8px">' + groups.map(function (g) { return '<button class="btn sm' + (g === grp ? ' pri' : '') + '" data-grp="' + g + '" style="flex:0">' + (g === 'gh' ? 'グループホーム' : '訪問看護') + '</button>'; }).join('') + '</div>' : '') +
+      '<h2 style="margin:0 0 6px">' + (grp === 'gh' ? 'グループホーム' : '訪問看護') + ' シフト表</h2>' + monthNav(month) + (r.closed ? '<span class="pill ok">締め済み</span>' : '') +
       '<p class="small muted">マスを押すと勤務パターンを選べます（' + r.patterns.map(function (p) { return esc(p.abbr) + '＝' + esc(p.name); }).join('、') + '）。2つ続く日は「夕21+夜」のようにつなげます。オレンジの下線は法定休日になる日（予定からの暫定。確定は週の終わり）。</p>' +
       (r.canEdit && !r.closed ? '<div class="row noprint"><button class="btn pri" id="sSave" style="flex:0">保存する</button><span class="muted small" id="sInfo"></span></div>' : '') + '</div>';
     html += '<div class="card scroll"><table class="grid"><tr><th class="name">名前</th>' + dates.map(function (d) { var w = new Date(d + 'T00:00:00Z').getUTCDay(); var hol = r.holidays[d]; return '<th class="' + (hol ? 'hol' : w === 0 ? 'sun' : w === 6 ? 'sat' : '') + '" title="' + esc(hol || '') + '">' + (+d.slice(8)) + '<br>' + DOW[w] + '</th>'; }).join('') + '</tr>';
@@ -442,6 +451,7 @@ function viewSched(month) {
     html += '</table></div>';
     $('main').innerHTML = html;
     bindMonthNav(month, viewSched);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-grp]'), function (b) { b.onclick = function () { if (Object.keys(schedEdits).length && !confirm('保存していない変更があります。切り替えると消えます。')) return; viewSched.grp = b.dataset.grp; viewSched(month); }; });
     if (!r.canEdit || r.closed) return;
     var opts = [''].concat(r.patterns.map(function (p) { return p.abbr; })).concat(LEAVE_KINDS);
     Array.prototype.forEach.call(document.querySelectorAll('td.cell'), function (td) {
