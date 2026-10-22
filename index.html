@@ -421,13 +421,19 @@ function viewSched(month) {
   call('scheduleGet', { month: month }).then(function (r) {
     if (!r.ok) { $('main').innerHTML = '<div class="msg ng">' + esc(r.error) + '</div>'; return; }
     var dates = []; for (var d = r.range.from; d <= r.range.to; d = addDays(d, 1)) dates.push(d);
-    // グループホームと訪問看護は別のシフト表にする（見られる方だけ出す）
+    // 事業所ごとに別のシフト表にする（見られる事業所だけ）。表に出るのは、その事業所が所属の人と、その事業所で勤務がある人
     var grpOf = function (site) { return site === '訪問看護' ? 'hk' : 'gh'; };
-    var groups = ['gh', 'hk'].filter(function (g) { return r.staff.some(function (s) { return grpOf(s.site) === g; }); });
-    if (groups.indexOf(viewSched.grp) < 0) viewSched.grp = groups[0] || 'gh';
-    var grp = viewSched.grp;
-    r.staff = r.staff.filter(function (s) { return grpOf(s.site) === grp; });
-    var used = {}; r.rows.forEach(function (x) { if (r.staff.some(function (s) { return s.id === x.staffId; })) used[x.pattern] = true; });
+    var isLeave = function (x) { return !x.pattern && x.leaveKind; };
+    var siteOrder = ['花園', '千本', '西天下茶屋', '訪問看護'];
+    r.staff.forEach(function (s) { if (s.site && siteOrder.indexOf(s.site) < 0) siteOrder.push(s.site); });
+    var sites = siteOrder.filter(function (st) { return r.staff.some(function (s) { return s.site === st; }) || r.rows.some(function (x) { return x.site === st && !isLeave(x); }); });
+    if (sites.indexOf(viewSched.site) < 0) viewSched.site = sites[0] || '花園';
+    var cur = viewSched.site, grp = grpOf(cur);
+    var extra = (viewSched.extra = viewSched.extra || {})[cur] = (viewSched.extra[cur] || {});
+    var allStaff = r.staff;
+    r.rows = r.rows.filter(function (x) { return x.site === cur || isLeave(x); });
+    r.staff = allStaff.filter(function (s) { return s.site === cur || extra[s.id] || r.rows.some(function (x) { return x.staffId === s.id && !isLeave(x); }); });
+    var used = {}; r.rows.forEach(function (x) { if (!isLeave(x) && r.staff.some(function (s) { return s.id === x.staffId; })) used[x.pattern] = true; });
     r.allPatterns = r.patterns.slice();
     r.patterns = r.patterns.filter(function (p) { var g = p.sites ? (p.sites.split(/[,、]/).some(function (x) { return grpOf(x.trim()) === 'gh'; }) ? 'gh' : 'hk') : 'gh'; return g === grp || used[p.name]; });
     // マスの文字：パターンの略称。時刻を書いた勤務は「13-17」（事業所のふだんのパターンでなければ「夕15-19」）
@@ -438,14 +444,14 @@ function viewSched(month) {
       if (!x.leaveKind && x.start && x.end) { var dflt = (x.site === '訪問看護' ? '訪問看護 日勤' : '日勤') === x.pattern; lbl = (dflt ? '' : (p ? p.abbr : '')) + hh(x.start) + '-' + hh(x.end); }
       (cell[k] = cell[k] || []).push(lbl); (cellAbbr[k] = cellAbbr[k] || []).push(x.leaveKind || (p ? p.abbr : '')); });
     var colors = {}; r.patterns.forEach(function (p) { colors[p.abbr] = p.color; });
-    var html = '<div class="card">' + (groups.length > 1 ? '<div class="row noprint" style="margin-bottom:8px">' + groups.map(function (g) { return '<button class="btn sm' + (g === grp ? ' pri' : '') + '" data-grp="' + g + '" style="flex:0">' + (g === 'gh' ? 'グループホーム' : '訪問看護') + '</button>'; }).join('') + '</div>' : '') +
-      '<h2 style="margin:0 0 6px">' + (grp === 'gh' ? 'グループホーム' : '訪問看護') + ' シフト表</h2>' + monthNav(month) + (r.closed ? '<span class="pill ok">締め済み</span>' : '') +
+    var html = '<div class="card">' + (sites.length > 1 ? '<div class="row noprint" style="margin-bottom:8px;flex-wrap:wrap">' + sites.map(function (st) { return '<button class="btn sm' + (st === cur ? ' pri' : '') + '" data-site="' + esc(st) + '" style="flex:0">' + esc(st) + '</button>'; }).join('') + '</div>' : '') +
+      '<h2 style="margin:0 0 6px">' + esc(cur) + ' シフト表</h2>' + monthNav(month) + (r.closed ? '<span class="pill ok">締め済み</span>' : '') +
       '<p class="small muted">マスを押すと勤務パターンを選べます（' + r.patterns.map(function (p) { return esc(p.abbr) + '＝' + esc(p.name); }).join('、') + '）。2つ続く日は「夕21+夜」のようにつなげます。時間がちがう日は「13-17」のように時刻を書きます（略称を付けると「夕15-19」）。オレンジの下線は法定休日になる日（予定からの暫定。確定は週の終わり）。</p>' +
       (r.canEdit && !r.closed ? '<div class="row noprint"><button class="btn pri" id="sSave" style="flex:0">保存する</button><span class="muted small" id="sInfo"></span></div>' : '') + '</div>';
     html += '<div class="card scroll"><table class="grid"><tr><th class="name">名前</th>' + dates.map(function (d) { var w = new Date(d + 'T00:00:00Z').getUTCDay(); var hol = r.holidays[d]; return '<th class="' + (hol ? 'hol' : w === 0 ? 'sun' : w === 6 ? 'sat' : '') + '" title="' + esc(hol || '') + '">' + (+d.slice(8)) + '<br>' + DOW[w] + '</th>'; }).join('') + '</tr>';
     r.staff.forEach(function (s) {
       var lg = r.legal[s.id] || { legal: {}, errors: [] };
-      html += '<tr class="' + (lg.errors.length ? 'err' : '') + (s.timee ? ' timee' : '') + '"><td class="name">' + esc(s.name) + '<div class="small muted">' + esc(s.site) + (s.timee ? '・打刻なし（予定で数える）' : '') + (lg.errors.length ? '・休日0の週あり' : '') + '</div></td>' + dates.map(function (d) {
+      html += '<tr class="' + (lg.errors.length ? 'err' : '') + (s.timee ? ' timee' : '') + '"><td class="name">' + esc(s.name) + '<div class="small muted">' + esc(s.site === cur ? s.site : s.site + 'から応援') + (s.timee ? '・打刻なし（予定で数える）' : '') + (lg.errors.length ? '・休日0の週あり' : '') + '</div></td>' + dates.map(function (d) {
         var v = (cell[s.id + '|' + d] || []).join('+');
         var c = colors[(cellAbbr[s.id + '|' + d] || [])[0]] || '';
         return '<td class="cell' + (lg.legal[d] ? ' legal' : '') + '" data-s="' + esc(s.id) + '" data-d="' + d + '" style="' + (c ? 'color:' + c : '') + '">' + esc(v.replace(/有休（全日）/, '有').replace(/有休（午前半休）/, '前半').replace(/有休（午後半休）/, '後半')) + '</td>';
@@ -455,10 +461,14 @@ function viewSched(month) {
     r.patterns.forEach(function (p) {
       html += '<tr><td class="name small muted">' + esc(p.abbr) + ' の人数</td>' + dates.map(function (d) { var n = r.staff.filter(function (s) { return (cellAbbr[s.id + '|' + d] || []).indexOf(p.abbr) >= 0; }).length; return '<td class="small">' + (n || '') + '</td>'; }).join('') + '</tr>';
     });
-    html += '</table></div>';
+    html += '</table>';
+    var others = allStaff.filter(function (s) { return r.staff.indexOf(s) < 0 && grpOf(s.site) === grp; });
+    if (r.canEdit && !r.closed && others.length) html += '<div class="row noprint" style="margin-top:8px"><select id="sAdd" style="max-width:280px"><option value="">＋ ほかの事業所の人をこの表に出す</option>' + others.map(function (s) { return '<option value="' + esc(s.id) + '">' + esc(s.name) + '（' + esc(s.site) + '）</option>'; }).join('') + '</select></div>';
+    html += '</div>';
     $('main').innerHTML = html;
     bindMonthNav(month, viewSched);
-    Array.prototype.forEach.call(document.querySelectorAll('[data-grp]'), function (b) { b.onclick = function () { if (Object.keys(schedEdits).length && !confirm('保存していない変更があります。切り替えると消えます。')) return; viewSched.grp = b.dataset.grp; viewSched(month); }; });
+    if ($('sAdd')) $('sAdd').onchange = function () { if (!this.value) return; if (Object.keys(schedEdits).length && !confirm('保存していない変更があります。消えてもよいですか。')) return; extra[this.value] = true; viewSched(month); };
+    Array.prototype.forEach.call(document.querySelectorAll('[data-site]'), function (b) { b.onclick = function () { if (Object.keys(schedEdits).length && !confirm('保存していない変更があります。切り替えると消えます。')) return; viewSched.site = b.dataset.site; viewSched(month); }; });
     if (!r.canEdit || r.closed) return;
     var opts = [''].concat(r.patterns.map(function (p) { return p.abbr; })).concat(LEAVE_KINDS);
     Array.prototype.forEach.call(document.querySelectorAll('td.cell'), function (td) {
@@ -477,7 +487,7 @@ function viewSched(month) {
       };
     });
     $('sSave').onclick = function () {
-      var ch = Object.keys(schedEdits).map(function (k) { var p = k.split('|'); return { staffId: p[0], date: p[1], value: schedEdits[k] }; });
+      var ch = Object.keys(schedEdits).map(function (k) { var p = k.split('|'); return { staffId: p[0], date: p[1], value: schedEdits[k], site: cur }; });
       if (!ch.length) return;
       call('scheduleSave', { month: month, changes: ch }).then(function (x) { if (!x.ok) return alert(x.error); viewSched(month); });
     };
