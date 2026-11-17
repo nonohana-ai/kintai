@@ -69,6 +69,8 @@
   .grid tr.err td.name { background:var(--ngbg); }
   .list .item { border-bottom:1px solid var(--line); padding:10px 0; }
   .list .item:last-child { border-bottom:0; }
+  .list .item.reqres { border-left:4px solid var(--line); padding-left:10px; } .item.reqres.ok { border-left-color:var(--ok); } .item.reqres.ng { border-left-color:var(--ng); } .item.reqres.warn { border-left-color:var(--warn); }
+  .reqhead .pill { font-size:14px; font-weight:bold; padding:3px 10px; }
   dialog { border:0; border-radius:14px; padding:0; width:min(520px,94vw); box-shadow:0 10px 40px rgba(0,0,0,.25); }
   dialog .in { padding:16px; }
   dialog::backdrop { background:rgba(0,0,0,.35); }
@@ -268,18 +270,36 @@ function viewCard(month, staffId) {
 function addDays(ymd, n) { var d = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(5, 7) - 1, +ymd.slice(8) + n)); return d.toISOString().slice(0, 10); }
 
 // ── 申請 ──
+function reqText(type, c) {
+  c = c || {};
+  if (type === '打刻漏れ') return (c.which || '') + 'の打刻漏れ ' + (c.time || '') + (c.nextDay ? '（翌日）' : '');
+  if (type === '有休') return c.kind || '有休';
+  if (type === '休憩が取れなかった') return '休憩が取れなかった ' + (c.minutes || '') + '分';
+  if (type === '許容範囲内だが業務だった') return (c.which || '') + '：予定の前後も業務だった';
+  return type;
+}
+function md(t) { t = String(t || ''); var m = t.match(/^\d{4}-(\d{2})-(\d{2})(?: (\d{1,2}:\d{2}))?/); return m ? (+m[1]) + '/' + (+m[2]) + (m[3] ? ' ' + m[3] : '') : t; }
+var REQ_STATE = { '承認': ['ok', '✓ 承認されました'], '却下': ['ng', '✕ 却下されました'], '申請中': ['warn', '承認待ち'], '取り下げ': ['', '取り下げました'] };
 function viewReq(msg) {
   call('myRequests').then(function (r) {
     var html = '<div class="card"><h2>申請する</h2>' + (msg || '') +
       '<label class="f">申請の種類</label><select id="rType"><option>打刻漏れ</option><option>有休</option><option>休憩が取れなかった</option><option>許容範囲内だが業務だった</option><option>休日出勤の希望</option></select>' +
       '<label class="f">日付（勤務の始まった日）</label><input id="rDate" type="date" value="' + today() + '"><div id="rMore"></div>' +
       '<label class="f">理由</label><textarea id="rWhy" placeholder="例 押し忘れました"></textarea><p><button class="btn pri" id="rSend" style="width:100%">申請する</button></p></div>';
-    html += '<div class="card"><h2>出した申請</h2><div class="list">' + (r.rows && r.rows.length ? r.rows.map(function (x) {
+    var rows = r.rows || [];
+    var item = function (x) {
       var c = {}; try { c = JSON.parse(x['内容'] || '{}'); } catch (e) { }
-      var pc = x['状態'] === '承認' ? 'ok' : x['状態'] === '却下' ? 'ng' : x['状態'] === '申請中' ? 'warn' : '';
-      return '<div class="item"><span class="pill ' + pc + '">' + esc(x['状態']) + '</span> ' + esc(x['勤務日']) + ' ' + esc(x['種類']) + ' ' + esc(c.kind || c.which || '') + ' ' + esc(c.time || '') + (c.minutes ? esc(c.minutes) + '分' : '') +
-        (x['コメント'] ? '<div class="small muted">' + esc(x['コメント']) + '</div>' : '') + (x['状態'] === '申請中' ? ' <button class="btn sm" data-cancel="' + esc(x['申請ID']) + '">取り下げ</button>' : '') + '</div>';
-    }).join('') : '<p class="muted">まだありません</p>') + '</div></div>';
+      var st = REQ_STATE[x['状態']] || ['', x['状態']];
+      var who = x['状態'] === '承認' || x['状態'] === '却下' ? (x.approverName ? x.approverName + 'さん' : '') + (x['承認日時'] ? ' ' + md(x['承認日時']) : '') : '';
+      return '<div class="item reqres ' + st[0] + '"><div class="reqhead"><span class="pill ' + st[0] + '">' + esc(st[1]) + '</span>' + (who ? ' <span class="small muted">' + esc(who) + '</span>' : '') + '</div>' +
+        '<div style="margin-top:4px"><b>' + esc(md(x['勤務日'])) + '</b> ' + esc(reqText(x['種類'], c)) + '</div>' +
+        (x['理由'] ? '<div class="small muted">申請の理由：' + esc(x['理由']) + '</div>' : '') +
+        (x['コメント'] ? '<div class="small"' + (x['状態'] === '却下' ? ' style="color:#b91c1c"' : '') + '>' + (x['状態'] === '却下' ? '却下の理由：' : 'コメント：') + esc(x['コメント']) + '</div>' : '') +
+        (x['状態'] === '申請中' ? '<div style="margin-top:6px"><button class="btn sm" data-cancel="' + esc(x['申請ID']) + '">取り下げ</button></div>' : '') + '</div>';
+    };
+    var waiting = rows.filter(function (x) { return x['状態'] === '申請中'; }), decided = rows.filter(function (x) { return x['状態'] !== '申請中'; });
+    html += '<div class="card"><h2>承認待ち（' + waiting.length + '件）</h2><div class="list">' + (waiting.length ? waiting.map(item).join('') : '<p class="muted">ありません</p>') + '</div></div>';
+    html += '<div class="card"><h2>結果</h2><div class="list">' + (decided.length ? decided.map(item).join('') : '<p class="muted">まだありません</p>') + '</div></div>';
     $('main').innerHTML = html;
     var more = function () {
       var t = $('rType').value, h = '';
@@ -349,14 +369,16 @@ function viewToday(date) {
 }
 
 // ── 承認待ち ──
-function viewPend() {
+function viewPend(msg) {
   call('pending').then(function (r) {
     if (!r.ok) { $('main').innerHTML = '<div class="msg ng">' + esc(r.error) + '</div>'; return; }
     var html = '';
-    html += '<div class="card"><h2>申請（' + r.requests.length + '件）</h2><div class="list">' + (r.requests.length ? r.requests.map(function (x) {
-      var c = x.content || {};
-      return '<div class="item"><b>' + esc(x.name) + '</b> ' + esc(x['勤務日']) + ' <span class="pill pri">' + esc(x['種類']) + '</span> ' + esc(c.kind || '') + ' ' + esc(c.which || '') + ' ' + esc(c.time || '') + (c.minutes ? ' ' + esc(c.minutes) + '分' : '') +
-        '<div class="small muted">' + esc(x['理由'] || '') + '（' + esc(x['出した日時']) + '）</div><div class="row" style="margin-top:6px"><button class="btn ok sm" data-ok="' + esc(x['申請ID']) + '">承認</button><button class="btn ng sm" data-ng="' + esc(x['申請ID']) + '">却下</button></div></div>';
+    var rq = r.requests;
+    html += (msg || '') + '<div class="card"><h2>申請（' + rq.length + '件）</h2>' +
+      (rq.length > 1 ? '<div class="row" style="margin-bottom:8px"><label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pAll" style="width:auto"> すべて選ぶ</label><button class="btn ok" id="pBulk" disabled>選んだものを承認</button></div>' : '') +
+      '<div class="list">' + (rq.length ? rq.map(function (x) {
+      return '<div class="item"><div style="display:flex;gap:8px;align-items:flex-start">' + (rq.length > 1 ? '<input type="checkbox" class="pChk" value="' + esc(x['申請ID']) + '" style="width:auto;margin-top:4px">' : '') + '<div style="flex:1"><b>' + esc(x.name) + '</b> ' + esc(md(x['勤務日'])) + ' <span class="pill pri">' + esc(x['種類']) + '</span> ' + esc(reqText(x['種類'], x.content)) +
+        '<div class="small muted">' + esc(x['理由'] || '') + '（' + esc(md(x['出した日時'])) + ' に申請）</div><div class="row" style="margin-top:6px"><button class="btn ok sm" data-ok="' + esc(x['申請ID']) + '">承認</button><button class="btn ng sm" data-ng="' + esc(x['申請ID']) + '">却下</button></div></div></div></div>';
     }).join('') : '<p class="muted">ありません</p>') + '</div></div>';
     html += '<div class="card"><h2>エラー・要確認（' + r.items.length + '件）</h2><div class="list">' + (r.items.length ? r.items.map(function (x, i) {
       var pc = x['状態'] === 'エラー' ? 'ng' : 'warn';
@@ -365,14 +387,36 @@ function viewPend() {
         '<div class="row" style="margin-top:6px"><button class="btn sm" data-dec="' + i + '">処理する</button><button class="btn sm" data-card="' + esc(x['職員ID']) + '|' + esc(x['月分']) + '">タイムカード</button></div></div>';
     }).join('') : '<p class="muted">ありません</p>') + '</div></div>';
     if (r.weekErrors.length) html += '<div class="card"><h2>週に休日がない（' + r.weekErrors.length + '件）</h2><div class="list">' + r.weekErrors.map(function (w, i) { return '<div class="item"><b>' + esc(w.name) + '</b> ' + esc(w['週の始まり']) + ' の週 <button class="btn sm" data-legal="' + i + '">法定休日労働の日を選ぶ</button></div>'; }).join('') + '</div><p class="small muted">この週は所定休日が1日もありません。どの日の労働を法定休日労働（1.35倍）にするか選びます。</p></div>';
+    if (r.recent && r.recent.length) html += '<div class="card"><h2>最近処理した申請（2週間）</h2><div class="list">' + r.recent.map(function (x) {
+      var st = REQ_STATE[x['状態']] || ['', x['状態']];
+      return '<div class="item"><span class="pill ' + st[0] + '">' + esc(x['状態']) + '</span> <b>' + esc(x.name) + '</b> ' + esc(md(x['勤務日'])) + ' ' + esc(reqText(x['種類'], x.content)) +
+        '<div class="small muted">' + esc(x.approverName || '') + 'さん ' + esc(md(x['承認日時'])) + (x['コメント'] ? '：' + esc(x['コメント']) : '') + '</div></div>';
+    }).join('') + '</div></div>';
     $('main').innerHTML = html;
-    Array.prototype.forEach.call(document.querySelectorAll('[data-ok]'), function (b) { b.onclick = function () { call('decideRequest', { id: b.getAttribute('data-ok'), approve: true }).then(done); }; });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-ng]'), function (b) { b.onclick = function () { askText('却下の理由', function (t) { call('decideRequest', { id: b.getAttribute('data-ng'), approve: false, comment: t }).then(done); }); }; });
+    var label = function (id) { var x = rq.filter(function (q) { return q['申請ID'] === id; })[0]; return x ? x.name + 'さんの ' + md(x['勤務日']) + ' ' + reqText(x['種類'], x.content) : ''; };
+    var busy = function (on) { Array.prototype.forEach.call(document.querySelectorAll('#main button'), function (b) { b.disabled = on; }); };
+    Array.prototype.forEach.call(document.querySelectorAll('[data-ok]'), function (b) { b.onclick = function () { var id = b.getAttribute('data-ok'), t = label(id); busy(true); b.textContent = '処理中…'; call('decideRequest', { id: id, approve: true }).then(function (x) { viewPend(x.ok ? '<div class="msg ok">✓ ' + esc(t) + 'を承認しました。本人にお知らせが届きます</div>' : '<div class="msg ng">' + esc(x.error) + '</div>'); }); }; });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-ng]'), function (b) { b.onclick = function () { var id = b.getAttribute('data-ng'), t0 = label(id); askText('却下の理由', function (t) { busy(true); call('decideRequest', { id: id, approve: false, comment: t }).then(function (x) { viewPend(x.ok ? '<div class="msg ok">' + esc(t0) + 'を却下しました。本人に理由つきでお知らせが届きます</div>' : '<div class="msg ng">' + esc(x.error) + '</div>'); }); }); }; });
+    var chks = document.querySelectorAll('.pChk');
+    var picked = function () { return Array.prototype.filter.call(chks, function (c) { return c.checked; }).map(function (c) { return c.value; }); };
+    var sync = function () { var n = picked().length; if ($('pBulk')) { $('pBulk').disabled = !n; $('pBulk').textContent = n ? '選んだ' + n + '件を承認' : '選んだものを承認'; } if ($('pAll')) $('pAll').checked = n === chks.length; };
+    Array.prototype.forEach.call(chks, function (c) { c.onchange = sync; });
+    if ($('pAll')) $('pAll').onchange = function () { var on = $('pAll').checked; Array.prototype.forEach.call(chks, function (c) { c.checked = on; }); sync(); };
+    if ($('pBulk')) $('pBulk').onclick = function () {
+      var ids = picked(); if (!ids.length) return;
+      if (!confirm(ids.length + '件の申請をまとめて承認します。よろしいですか？')) return;
+      busy(true); $('pBulk').textContent = '処理中…（' + ids.length + '件）';
+      call('decideRequests', { ids: ids }).then(function (x) {
+        if (!x.ok) return viewPend('<div class="msg ng">' + esc(x.error) + '</div>');
+        var m = x.done ? '<div class="msg ok">✓ ' + x.done + '件を承認しました。本人にお知らせが届きます</div>' : '';
+        if (x.errors && x.errors.length) m += '<div class="msg ng">承認できなかった申請（' + x.errors.length + '件）：<br>' + x.errors.map(function (e) { return esc(e.name + ' ' + md(e.date) + ' ' + e.type + '：' + e.error); }).join('<br>') + '</div>';
+        viewPend(m);
+      });
+    };
     Array.prototype.forEach.call(document.querySelectorAll('[data-dec]'), function (b) { b.onclick = function () { decideDialog(r.items[+b.getAttribute('data-dec')]); }; });
     Array.prototype.forEach.call(document.querySelectorAll('[data-card]'), function (b) { b.onclick = function () { var p = b.getAttribute('data-card').split('|'); go('card'); viewCard(p[1], p[0]); }; });
     Array.prototype.forEach.call(document.querySelectorAll('[data-legal]'), function (b) { b.onclick = function () { legalDialog(r.weekErrors[+b.getAttribute('data-legal')]); }; });
   });
-  function done(x) { if (!x.ok) alert(x.error); viewPend(); }
 }
 function dialog(html) { $('dlgBody').innerHTML = html; $('dlg').showModal(); }
 function closeDlg() { $('dlg').close(); }
